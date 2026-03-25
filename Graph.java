@@ -4,13 +4,16 @@ import java.io.File;
 import java.io.FileReader;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.PriorityQueue;
 import java.util.Queue;
 import java.util.Set;
 
@@ -190,9 +193,66 @@ public class Graph {
         return cheminFinal;
     }
 
-    public Map<Localisation,Double> determinerChronologieDeLaCrue(long[] idsOrigin, double vWaterInit,double k) {
-        //TODO
-        return null ;
+    public Map<Localisation, Double> determinerChronologieDeLaCrue(long[] idsOrigin, double vWaterInit, double k) {
+
+        // Carnet final : heure d'inondation de chaque noeud
+        // LinkedHashMap garde l'ordre d'insertion = ordre croissant de temps
+        Map<Localisation, Double> tFlood = new LinkedHashMap<>();
+
+        // File de priorité : [nodeId, tFlood, vWater]
+        // Trie automatiquement par tFlood croissant (le plus urgent en premier)
+        PriorityQueue<double[]> pq = new PriorityQueue<>(Comparator.comparingDouble(e -> e[1]));
+
+        // DÉPART : tous les points d'origine sont inondés à t=0
+        for (long id : idsOrigin) {
+            Localisation loc = noeuds.get(id);
+            if (loc != null) {
+                tFlood.put(loc, 0.0);
+                pq.offer(new double[]{id, 0.0, vWaterInit});
+            }
+        }
+
+        while (!pq.isEmpty()) {
+
+            double[] current = pq.poll();
+            long    currentId = (long) current[0];
+            double  tCourant  = current[1];
+            double  vCourant  = current[2];
+
+            Localisation currentLoc = noeuds.get(currentId);
+
+            // OPTIMISATION CLÉ : si ce noeud a déjà été finalisé avec un meilleur
+            // temps, on ignore cette entrée (elle est périmée)
+            if (tFlood.containsKey(currentLoc) && tFlood.get(currentLoc) < tCourant) continue;
+
+            // On explore tous les voisins du noeud courant
+            List<Arc> arcs = adjacents.get(currentId);
+            if (arcs == null) continue;
+
+            for (Arc arc : arcs) {
+
+                Localisation voisin = noeuds.get(arc.getArriveeId());
+                if (voisin == null) continue;
+
+                // PHYSIQUE : la pente détermine si l'eau accélère ou ralentit
+                double pente   = (currentLoc.getAltitude() - voisin.getAltitude()) / arc.getDistance();
+                double vVoisin = vCourant + k * pente;
+
+                // L'eau s'arrête si sa vitesse devient nulle ou négative
+                if (vVoisin <= 0) continue;
+
+                // Temps pour traverser cet arc + heure d'arrivée au voisin
+                double tVoisin = tCourant + arc.getDistance() / vVoisin;
+
+                // RELAXATION : on met à jour seulement si on a trouvé un chemin plus rapide
+                if (!tFlood.containsKey(voisin) || tVoisin < tFlood.get(voisin)) {
+                    tFlood.put(voisin, tVoisin);
+                    pq.offer(new double[]{arc.getArriveeId(), tVoisin, vVoisin});
+                }
+            }
+        }
+
+        return tFlood;
     }
 
     public Deque<Localisation> trouverCheminDEvacuationLePlusCourt(long idOrigin, long idEvacuation, double vVehicule, Map<Localisation,Double> tFlood) {
